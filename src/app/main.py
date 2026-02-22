@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from src.app.api.v1 import test_db
 from src.app.api.v1 import users
+from src.app.api.v1 import auth
 
 
 app = FastAPI(
@@ -10,6 +11,7 @@ app = FastAPI(
     description="Платформа для подготовки к ЕГЭ по химии",
     version="1.0.0",
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +24,7 @@ app.add_middleware(
 
 app.include_router(test_db.router, prefix="/api/v1", tags=["test"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 
 
 @app.get("/")
