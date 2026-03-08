@@ -13,21 +13,27 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)
+):
     """
     Аутентификация пользователя и выдача JWT токена.
-    
-    Использует стандартную форму OAuth2:
-        username email пользователя
-        password пароль
+
+    Используею стандартную форму OAuth2:
+        username: email пользователя
+        password: пароль
     """
     stmt = select(User).where(User.email == form_data.username)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
-    
+
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный email или пароль", headers={"WWW-Authenticate": "Bearer"},)
-    
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный email или пароль",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Проверяю проль
     if not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -35,10 +41,10 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
             detail="Неверный email или пароль",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Создаю токен
     access_token = create_access_token(
-        data={"sub": user.email} # sub = subject (идентификатор пользователя)
+        data={"sub": user.email}  # sub = subject (идентификатор пользователя)
     )
     # Возвращаю токен
     return Token(access_token=access_token)
