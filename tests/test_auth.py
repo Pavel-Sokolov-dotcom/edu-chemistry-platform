@@ -4,7 +4,9 @@ from httpx import AsyncClient
 
 @pytest.mark.asyncio
 async def test_login_success(client: AsyncClient):
-    """Проверка успешного входа"""
+    """
+    Проверка успешного входа
+    """
     response = await client.post(
         "/api/v1/auth/login", json={"username": "testuser", "password": "testpassword"}
     )
@@ -14,7 +16,9 @@ async def test_login_success(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_login_wrong_password(client: AsyncClient):
-    """Проверка входа с неверным паролем"""
+    """
+    Проверка входа с неверным паролем
+    """
     response = await client.post(
         "/api/v1/auth/login", json={"username": "testuser", "password": "wrongpassword"}
     )
