@@ -14,7 +14,7 @@ from app.db.session import get_db, AsyncSessionLocal
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# URL тестовой БД
+
 TEST_DATABASE_URL = (
     "postgresql+asyncpg://postgres:postgres@localhost:5433/chemistry_platform_test"
 )
@@ -22,7 +22,9 @@ TEST_DATABASE_URL = (
 
 @pytest.fixture(scope="session")
 def event_loop():
-    """Создаёт event loop для асинхронных тестов"""
+    """
+    Создаёт event loop для асинхронных тестов
+    """
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
@@ -30,7 +32,9 @@ def event_loop():
 
 @pytest.fixture(scope="function")
 async def db_engine():
-    """Создаёт движок БД для тестов"""
+    """
+    Создаёт движок БД для тестов
+    """
     engine = create_async_engine(
         TEST_DATABASE_URL,
         poolclass=NullPool,
@@ -43,7 +47,7 @@ async def db_engine():
 
     yield engine
 
-    # Удаляю таблицы после теста (чистая БД для последующих тестов)
+    # Удаляю таблицы после теста (пустая БД для последующих тестов)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
 
@@ -52,7 +56,9 @@ async def db_engine():
 
 @pytest.fixture(scope="function")
 async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Создаёт сессию БД для каждого теста"""
+    """
+    Создаёт сессию БД для каждого теста
+    """
     async_session = async_sessionmaker(
         db_engine, class_=AsyncSession, expire_on_commit=False
     )
@@ -84,7 +90,9 @@ async def client(db_session) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest.fixture(scope="function")
 async def auth_token(client: AsyncClient) -> str:
-    """Получает JWT токен через API"""
+    """
+    Получает JWT токен через API
+    """
     # Регистрация пользователя
     await client.post(
         "/api/v1/auth/register",
@@ -107,5 +115,7 @@ async def auth_token(client: AsyncClient) -> str:
 
 @pytest.fixture(scope="function")
 def auth_headers(auth_token: str) -> dict:
-    """Заголовки с авторизацией"""
+    """
+    Заголовки с авторизацией
+    """
     return {"Authorization": f"Bearer {auth_token}"}
