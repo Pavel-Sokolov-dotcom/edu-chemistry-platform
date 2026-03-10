@@ -22,7 +22,8 @@ Backend:
 - регистрация пользователей
 - login / refresh token
 
-Структура проекта
+### Структура проекта
+```text
 app/
    api/
    services/
@@ -35,9 +36,9 @@ tests/
 locust/
 
 docker-compose.yml
+```
 
-
-Запуск проекта
+### Запуск проекта
 ```bash
 docker-compose up --build
 ```
