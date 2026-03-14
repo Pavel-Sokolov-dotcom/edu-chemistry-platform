@@ -1,121 +1,87 @@
+import os
 import pytest
 import asyncio
-from typing import AsyncGenerator
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import NullPool
 import sys
 from pathlib import Path
-from app.main import app
-from app.core.config import settings
-from app.models.base import Base
-from app.db.session import get_db, AsyncSessionLocal
+from typing import Generator
 
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.pool import NullPool
 
+# Устанавливаем URL тестовой БД
+TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5433/chemistry_platform_test"
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+
+# Добавляем путь к src
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from src.app.main import app
+from src.app.models.base import Base
+from src.app.db.session import get_db
 
-TEST_DATABASE_URL = (
-    "postgresql+asyncpg://postgres:postgres@localhost:5433/chemistry_platform_test"
-)
 
-
-@pytest.fixture(scope="session")
-def event_loop():
+@pytest.fixture(scope="function")
+def client() -> Generator:
     """
-    Создаёт event loop для асинхронных тестов
+    Тестовый клиент с изолированной БД для каждого теста.
+    Использует синхронную фикстуру, которая управляет асинхронным кодом.
     """
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
+    # Создаём новый цикл событий для этого теста
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Асинхронная функция для настройки
+    async def setup():
+        # Создаём engine
+        engine = create_async_engine(
+            TEST_DATABASE_URL,
+            echo=False,
+            poolclass=NullPool,
+        )
+        
+        # Создаём таблицы
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        
+        # Создаём сессию
+        async_session = async_sessionmaker(
+            engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        
+        # Создаём сессию
+        session = async_session()
+        
+        # Переопределяем зависимость
+        async def override_get_db():
+            yield session
+        app.dependency_overrides[get_db] = override_get_db
+        
+        # Создаём клиент
+        client = AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        )
+        await client.__aenter__()
+        
+        return client, engine, session
+    
+    # Запускаем настройку
+    client, engine, session = loop.run_until_complete(setup())
+    
+    # Возвращаем клиент для теста
+    yield client
+    
+    # Очистка после теста
+    async def teardown():
+        await client.__aexit__(None, None, None)
+        app.dependency_overrides.clear()
+        await session.close()
+        await engine.dispose()
+    
+    loop.run_until_complete(teardown())
     loop.close()
-
-
-@pytest.fixture(scope="function")
-async def db_engine():
-    """
-    Создаёт движок БД для тестов
-    """
-    engine = create_async_engine(
-        TEST_DATABASE_URL,
-        poolclass=NullPool,
-        echo=False,
-    )
-
-    # Создаю все таблицы перед тестом
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    yield engine
-
-    # Удаляю таблицы после теста (пустая БД для последующих тестов)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    await engine.dispose()
-
-
-@pytest.fixture(scope="function")
-async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
-    """
-    Создаёт сессию БД для каждого теста
-    """
-    async_session = async_sessionmaker(
-        db_engine, class_=AsyncSession, expire_on_commit=False
-    )
-
-    async with async_session() as session:
-        yield session
-
-
-@pytest.fixture(scope="function")
-async def client(db_session) -> AsyncGenerator[AsyncClient, None]:
-    """
-    Тестовый HTTP-клиент с переопределённой зависимостью БД.
-    """
-
-    # Переопределяю зависимость get_db
-    async def override_get_db():
-        yield db_session
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        yield ac
-
-    # Снимаю переопределение после теста
-    app.dependency_overrides.clear()
-
-
-@pytest.fixture(scope="function")
-async def auth_token(client: AsyncClient) -> str:
-    """
-    Получает JWT токен через API
-    """
-    # Регистрация пользователя
-    await client.post(
-        "/api/v1/auth/register",
-        json={
-            "username": "testuser",
-            "email": "test@example.com",
-            "password": "testpassword",
-        },
-    )
-
-    # Логинюсь с ранее переданными данными
-    response = await client.post(
-        "/api/v1/auth/login", json={"username": "testuser", "password": "testpassword"}
-    )
-
-    if response.status_code == 200:
-        return response.json()["access_token"]
-    return ""
-
-
-@pytest.fixture(scope="function")
-def auth_headers(auth_token: str) -> dict:
-    """
-    Заголовки с авторизацией
-    """
-    return {"Authorization": f"Bearer {auth_token}"}
+    

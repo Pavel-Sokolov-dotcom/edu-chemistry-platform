@@ -1,7 +1,7 @@
 services:
   postgres:                    # Сервис БД
     image: postgres:15-alpine
-    container_name: edu_chemistry_db  # Добавим для понятности
+    container_name: edu_chemistry_db
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -20,7 +20,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: chemistry_platform_test  # <-- Другое имя БД
+      POSTGRES_DB: chemistry_platform_test  # <-- Тестовое имя БД
     ports:
       - "5433:5432"  # <-- Другой порт, чтобы не было конфликта
   
