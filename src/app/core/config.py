@@ -2,11 +2,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        extra="ignore"
-    )
-    
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     DATABASE_URL: str
     SECRET_KEY: str  # 03ZrF*********************************
     ALGORITHM: str = "HS256"

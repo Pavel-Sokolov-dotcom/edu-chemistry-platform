@@ -50,3 +50,8 @@ async def test_db_url():
         "postgres_host": os.getenv("POSTGRES_HOST", "localhost"),
         "postgres_port": os.getenv("POSTGRES_PORT", "5432"),
     }
+
+
+@app.get("/tasks")
+async def test_tasks():
+    return {"message": "Ok"}

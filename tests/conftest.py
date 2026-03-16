@@ -1,87 +1,78 @@
 import os
 import pytest
-import asyncio
 import sys
 from pathlib import Path
 from typing import Generator
 
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import NullPool
+from fastapi.testclient import TestClient
+from fastapi import FastAPI
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-# Устанавливаем URL тестовой БД
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5433/chemistry_platform_test"
+# Устанавливаем URL тестовой БД (синхронный)
+TEST_DATABASE_URL = (
+    "postgresql://postgres:postgres@localhost:5433/chemistry_platform_test"
+)
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 # Добавляем путь к src
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from src.app.main import app
+# Импортируем модели
 from src.app.models.base import Base
-from src.app.db.session import get_db
+from src.app.models.user import User
 
 
 @pytest.fixture(scope="function")
 def client() -> Generator:
     """
-    Тестовый клиент с изолированной БД для каждого теста.
-    Использует синхронную фикстуру, которая управляет асинхронным кодом.
+    Тестовый клиент с изолированной БД.
     """
-    # Создаём новый цикл событий для этого теста
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Асинхронная функция для настройки
-    async def setup():
-        # Создаём engine
-        engine = create_async_engine(
-            TEST_DATABASE_URL,
-            echo=False,
-            poolclass=NullPool,
-        )
-        
-        # Создаём таблицы
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
-        
-        # Создаём сессию
-        async_session = async_sessionmaker(
-            engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-        
-        # Создаём сессию
-        session = async_session()
-        
-        # Переопределяем зависимость
-        async def override_get_db():
-            yield session
-        app.dependency_overrides[get_db] = override_get_db
-        
-        # Создаём клиент
-        client = AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        )
-        await client.__aenter__()
-        
-        return client, engine, session
-    
-    # Запускаем настройку
-    client, engine, session = loop.run_until_complete(setup())
-    
-    # Возвращаем клиент для теста
-    yield client
-    
-    # Очистка после теста
-    async def teardown():
-        await client.__aexit__(None, None, None)
-        app.dependency_overrides.clear()
-        await session.close()
-        await engine.dispose()
-    
-    loop.run_until_complete(teardown())
-    loop.close()
-    
+    # Создаём синхронный engine
+    engine = create_engine(
+        TEST_DATABASE_URL,
+        echo=False,
+        pool_size=1,
+        max_overflow=0,
+    )
+
+    # Создаём таблицы
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+
+    # Создаём сессию
+    TestingSessionLocal = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=engine,
+    )
+
+    session = TestingSessionLocal()
+
+    # Создаём тестовое приложение
+    app = FastAPI(title="Test API")
+
+    # Функция для получения сессии
+    def get_db_override():
+        yield session
+
+    # Переопределяем зависимость
+    from src.app.api import deps
+
+    app.dependency_overrides[deps.get_db] = get_db_override
+
+    # Импортируем роутеры
+    from src.app.api.v1 import auth, users
+
+    # Подключаем роутеры
+    app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+    app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+
+    # Используем TestClient из FastAPI
+    with TestClient(app) as client:
+        yield client
+
+    # Очистка
+    app.dependency_overrides.clear()
+    session.close()
+    engine.dispose()
