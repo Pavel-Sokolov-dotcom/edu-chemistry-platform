@@ -1,121 +1,78 @@
+import os
 import pytest
-import asyncio
-from typing import AsyncGenerator
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.pool import NullPool
 import sys
 from pathlib import Path
-from app.main import app
-from app.core.config import settings
-from app.models.base import Base
-from app.db.session import get_db, AsyncSessionLocal
+from typing import Generator
 
+from fastapi.testclient import TestClient
+from fastapi import FastAPI
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+# Устанавливаем URL тестовой БД (синхронный)
+TEST_DATABASE_URL = (
+    "postgresql://postgres:postgres@localhost:5433/chemistry_platform_test"
+)
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+
+# Добавляем путь к src
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-
-TEST_DATABASE_URL = (
-    "postgresql+asyncpg://postgres:postgres@localhost:5433/chemistry_platform_test"
-)
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """
-    Создаёт event loop для асинхронных тестов
-    """
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# Импортируем модели
+from src.app.models.base import Base
+from src.app.models.user import User
 
 
 @pytest.fixture(scope="function")
-async def db_engine():
+def client() -> Generator:
     """
-    Создаёт движок БД для тестов
+    Тестовый клиент с изолированной БД.
     """
-    engine = create_async_engine(
+    # Создаём синхронный engine
+    engine = create_engine(
         TEST_DATABASE_URL,
-        poolclass=NullPool,
         echo=False,
+        pool_size=1,
+        max_overflow=0,
     )
 
-    # Создаю все таблицы перед тестом
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Создаём таблицы
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
 
-    yield engine
-
-    # Удаляю таблицы после теста (пустая БД для последующих тестов)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-    await engine.dispose()
-
-
-@pytest.fixture(scope="function")
-async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
-    """
-    Создаёт сессию БД для каждого теста
-    """
-    async_session = async_sessionmaker(
-        db_engine, class_=AsyncSession, expire_on_commit=False
+    # Создаём сессию
+    TestingSessionLocal = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=engine,
     )
 
-    async with async_session() as session:
+    session = TestingSessionLocal()
+
+    # Создаём тестовое приложение
+    app = FastAPI(title="Test API")
+
+    # Функция для получения сессии
+    def get_db_override():
         yield session
 
+    # Переопределяем зависимость
+    from src.app.api import deps
 
-@pytest.fixture(scope="function")
-async def client(db_session) -> AsyncGenerator[AsyncClient, None]:
-    """
-    Тестовый HTTP-клиент с переопределённой зависимостью БД.
-    """
+    app.dependency_overrides[deps.get_db] = get_db_override
 
-    # Переопределяю зависимость get_db
-    async def override_get_db():
-        yield db_session
+    # Импортируем роутеры
+    from src.app.api.v1 import auth, users
 
-    app.dependency_overrides[get_db] = override_get_db
+    # Подключаем роутеры
+    app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+    app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        yield ac
+    # Используем TestClient из FastAPI
+    with TestClient(app) as client:
+        yield client
 
-    # Снимаю переопределение после теста
+    # Очистка
     app.dependency_overrides.clear()
-
-
-@pytest.fixture(scope="function")
-async def auth_token(client: AsyncClient) -> str:
-    """
-    Получает JWT токен через API
-    """
-    # Регистрация пользователя
-    await client.post(
-        "/api/v1/auth/register",
-        json={
-            "username": "testuser",
-            "email": "test@example.com",
-            "password": "testpassword",
-        },
-    )
-
-    # Логинюсь с ранее переданными данными
-    response = await client.post(
-        "/api/v1/auth/login", json={"username": "testuser", "password": "testpassword"}
-    )
-
-    if response.status_code == 200:
-        return response.json()["access_token"]
-    return ""
-
-
-@pytest.fixture(scope="function")
-def auth_headers(auth_token: str) -> dict:
-    """
-    Заголовки с авторизацией
-    """
-    return {"Authorization": f"Bearer {auth_token}"}
+    session.close()
+    engine.dispose()
